@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Binary tools (downloaded at runtime)
+bin/
+
+# Gemini logo mask assets (fetched at runtime from GeminiWatermarkTool)
+# Not committed to avoid distributing Google trademark assets
+assets/bg_48.png
+assets/bg_96.png
+assets/_mask_b64.py
+
+# Claude Code local settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
