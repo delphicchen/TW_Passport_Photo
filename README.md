@@ -24,10 +24,10 @@
 | 解析度 | 600 DPI |
 | 輸出像素 | 827 × 1063 px |
 
-## 安裝
+## 安裝(也可以由下方release 直接下載打包好的執行檔)
 
 ```bash
-# 建議使用虛擬環境，也可以由下方release 直接下載打包好的執行檔
+# 建議使用虛擬環境
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
