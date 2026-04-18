@@ -14,7 +14,18 @@ import re
 import urllib.request
 from pathlib import Path
 
-_ASSETS  = Path(__file__).parent.parent / "assets"
+def _assets_dir() -> Path:
+    """Return a writable assets directory that survives PyInstaller bundling."""
+    import sys
+    if getattr(sys, "frozen", False):
+        # Running inside a PyInstaller one-file bundle — use user home
+        d = Path.home() / ".tw_passport_photo" / "assets"
+    else:
+        d = Path(__file__).parent.parent / "assets"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+_ASSETS = _assets_dir()
 _HPP_URL = (
     "https://api.github.com/repos/allenk/GeminiWatermarkTool"
     "/contents/assets/embedded_assets.hpp"

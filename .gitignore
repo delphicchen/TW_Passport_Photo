@@ -5,6 +5,11 @@ __pycache__/
 .venv/
 venv/
 
+# PyInstaller build output
+build/
+dist/
+*.spec.bak
+
 # Binary tools (downloaded at runtime)
 bin/
 

@@ -34,7 +34,16 @@ import numpy as np
 from PIL import Image
 
 # ── paths ─────────────────────────────────────────────────────────────────────
-_ASSETS = Path(__file__).parent.parent / "assets"
+def _assets_dir() -> Path:
+    import sys
+    if getattr(sys, "frozen", False):
+        d = Path.home() / ".tw_passport_photo" / "assets"
+    else:
+        d = Path(__file__).parent.parent / "assets"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+_ASSETS  = _assets_dir()
 _BIN_DIR = Path(__file__).parent.parent / "bin"
 
 # gwt-mini release

@@ -1,0 +1,79 @@
+name: Build Executables
+
+on:
+  push:
+    tags:
+      - 'v*'          # trigger on version tags, e.g. v1.0.0
+  workflow_dispatch:  # allow manual trigger from GitHub UI
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: TW_Passport_Photo.exe
+            dist_path: dist/TW_Passport_Photo.exe
+          - os: macos-latest
+            artifact: TW_Passport_Photo-macOS.zip
+            dist_path: dist/TW_Passport_Photo-macOS.zip
+          - os: ubuntu-latest
+            artifact: TW_Passport_Photo-linux
+            dist_path: dist/TW_Passport_Photo
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build (Windows / Linux)
+        if: matrix.os != 'macos-latest'
+        run: pyinstaller passport.spec
+
+      - name: Build (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          pyinstaller passport.spec
+          cd dist && zip -r TW_Passport_Photo-macOS.zip TW_Passport_Photo.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.dist_path }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          body: |
+            ## 下載說明
+
+            | 平台 | 檔案 |
+            |------|------|
+            | Windows | `TW_Passport_Photo.exe` |
+            | macOS | `TW_Passport_Photo-macOS.zip`（解壓後拖入 Applications）|
+            | Linux | `TW_Passport_Photo-linux`（`chmod +x` 後執行）|
+
+            首次執行去浮水印功能時需要網路連線（自動下載約 10 KB 的 mask 資料）。
