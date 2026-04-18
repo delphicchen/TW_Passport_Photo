@@ -27,7 +27,7 @@
 ## 安裝
 
 ```bash
-# 建議使用虛擬環境
+# 建議使用虛擬環境，也可以由下方release 直接下載打包好的執行檔
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
