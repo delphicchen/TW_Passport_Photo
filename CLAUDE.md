@@ -43,6 +43,8 @@ bin/                        gwt-mini binaries — gitignored, optional quality u
 
 **Watermark removal** — pure-Python backend (PIL + numpy) using the Gemini logo mask fetched from GeminiWatermarkTool. An optional gwt-mini CLI binary can be placed in `bin/` for higher-quality removal (AI denoising). The mask PNGs are downloaded by `core/mask_fetcher.py` on first use and cached in `assets/`.
 
+**Manual watermark removal** — when the automatic corner removal misses (watermark not in the assumed bottom-right corner, or non-uniform background), the user can box the watermark by hand. `PhotoCanvas.set_mark_mode(True)` makes left-drag draw a selection rect (stored in *image-pixel* coords so it stays pinned through pan/zoom) instead of panning; `marked_image_rect()` returns `(x,y,w,h)`. `watermark_remover.remove_watermark_region()` inpaints that box via multiscale Laplace diffusion (`_inpaint_diffuse`) — no logo mask needed, pure numpy/PIL. The mask is dilated ~3 px (forgiving box edges) and surrounding-area grain is re-added so the fill isn't an obviously smooth patch.
+
 **Save output** — `_save_photo` calls `canvas.crop_pixmap()`, which returns the user-adjusted crop (including any noisy fill), then resizes to 827×1063 px at 600 DPI via Pillow.
 
 **Print sheet** — `ui/print_sheet.py` composes a 1800×1200 px image (4×6 in landscape @ 300 DPI) with 8 slots arranged in 4 cols × 2 rows. Each slot accepts an independent photo; PIL handles the final compositing.

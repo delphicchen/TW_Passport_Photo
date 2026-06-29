@@ -56,6 +56,7 @@ class PhotoCanvas(QWidget):
     """Main editing canvas.  User drags to pan, scrolls to zoom."""
 
     crop_changed = Signal()   # emitted whenever the visible crop changes
+    mark_changed = Signal()   # emitted when the manual watermark mark changes
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -67,6 +68,12 @@ class PhotoCanvas(QWidget):
         self._pan:  QPointF     = QPointF(0.0, 0.0)
         self._drag_start: QPoint | None = None
         self._drag_pan_start: QPointF   = QPointF(0.0, 0.0)
+
+        # Manual watermark marking (rect stored in IMAGE-pixel coords so it
+        # stays pinned to the watermark through pan/zoom).
+        self._mark_mode: bool = False
+        self._mark_img:  QRectF | None  = None
+        self._mark_origin_img: QPointF | None = None
         # Cached top-edge colour for seamless noisy fill; updated on photo load
         self._top_rgb: np.ndarray = np.array([252, 252, 252], dtype=np.float64)
 
@@ -79,10 +86,13 @@ class PhotoCanvas(QWidget):
         self.pixmap  = pixmap
         self._zoom   = 1.0
         self._pan    = QPointF(0.0, 0.0)
+        self._mark_img = None
+        self._mark_origin_img = None
         # Sample top 5 rows of the original photo as the fill base colour
         self._top_rgb = _sample_top_rgb(pixmap, n_rows=5)
         self.update()
         self.crop_changed.emit()
+        self.mark_changed.emit()
 
     def crop_pixmap(self) -> QPixmap | None:
         """Return a QPixmap of what would be saved.
@@ -133,16 +143,78 @@ class PhotoCanvas(QWidget):
         p.end()
         return result
 
+    # ── manual watermark marking ───────────────────────────────────────────────
+
+    def set_mark_mode(self, on: bool) -> None:
+        """Enter/leave manual watermark marking. Left-drag draws a box when on."""
+        self._mark_mode = on
+        self._mark_origin_img = None
+        if not on:
+            self._mark_img = None
+        self.setCursor(
+            Qt.CursorShape.CrossCursor if on else Qt.CursorShape.OpenHandCursor
+        )
+        self.update()
+        self.mark_changed.emit()
+
+    def has_mark(self) -> bool:
+        return (
+            self._mark_img is not None
+            and self._mark_img.width() >= 1
+            and self._mark_img.height() >= 1
+        )
+
+    def marked_image_rect(self) -> tuple[int, int, int, int] | None:
+        """The marked box as (x, y, w, h) in original-image pixels, or None."""
+        if not self.has_mark() or not self.pixmap:
+            return None
+        r = self._mark_img.normalized()
+        x0 = int(round(r.left()));  y0 = int(round(r.top()))
+        x1 = int(round(r.right())); y1 = int(round(r.bottom()))
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            return None
+        return (x0, y0, x1 - x0, y1 - y0)
+
+    def _photo_geom(self) -> tuple[float, float, float]:
+        """Return (eff_scale, origin_x, origin_y) of the displayed photo."""
+        frame = self._frame_rect()
+        fw, fh = frame.width(), frame.height()
+        iw, ih = self.pixmap.width(), self.pixmap.height()
+        eff = self._effective_scale(fw, fh, iw, ih)
+        ox = frame.x() + (fw - iw * eff) / 2 + self._pan.x()
+        oy = frame.y() + (fh - ih * eff) / 2 + self._pan.y()
+        return eff, ox, oy
+
+    def _image_from_widget(self, pt: QPoint) -> QPointF:
+        eff, ox, oy = self._photo_geom()
+        iw, ih = self.pixmap.width(), self.pixmap.height()
+        ix = min(max((pt.x() - ox) / eff, 0.0), float(iw))
+        iy = min(max((pt.y() - oy) / eff, 0.0), float(ih))
+        return QPointF(ix, iy)
+
     # ── mouse / wheel events ──────────────────────────────────────────────────
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self.pixmap:
-            self._drag_start      = event.pos()
-            self._drag_pan_start  = QPointF(self._pan)
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        if not self.pixmap or event.button() != Qt.MouseButton.LeftButton:
+            return
+        if self._mark_mode:
+            self._mark_origin_img = self._image_from_widget(event.pos())
+            self._mark_img = QRectF(self._mark_origin_img, self._mark_origin_img)
+            self.update()
+            return
+        self._drag_start      = event.pos()
+        self._drag_pan_start  = QPointF(self._pan)
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def mouseMoveEvent(self, event) -> None:
-        if self._drag_start is None or not self.pixmap:
+        if not self.pixmap:
+            return
+        if self._mark_mode and self._mark_origin_img is not None:
+            cur = self._image_from_widget(event.pos())
+            self._mark_img = QRectF(self._mark_origin_img, cur).normalized()
+            self.update()
+            return
+        if self._drag_start is None:
             return
         delta = event.pos() - self._drag_start
         self._pan = self._drag_pan_start + QPointF(delta)
@@ -151,11 +223,20 @@ class PhotoCanvas(QWidget):
         self.crop_changed.emit()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start = None
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        if self._mark_mode and self._mark_origin_img is not None:
+            self._mark_origin_img = None
+            self.update()
+            self.mark_changed.emit()
+            return
+        self._drag_start = None
+        if not self._mark_mode:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def mouseDoubleClickEvent(self, event) -> None:
+        if self._mark_mode:
+            return
         # Reset zoom and pan on double-click
         self._zoom = 1.0
         self._pan  = QPointF(0.0, 0.0)
@@ -195,6 +276,9 @@ class PhotoCanvas(QWidget):
             self._draw_spec_guide(painter, frame)
         if self.show_contour_guide:
             self._draw_contour_guide(painter, frame)
+
+        if self._mark_mode and self.pixmap is not None:
+            self._draw_mark(painter, frame)
 
         # Hint text (outlined for legibility over white backgrounds)
         if self.pixmap:
@@ -285,6 +369,25 @@ class PhotoCanvas(QWidget):
         painter.setBrush(QBrush(QColor(255, 255, 255, 25)))
         painter.setPen(QPen(_CLR_OVAL, 2, Qt.PenStyle.DashLine))
         painter.drawEllipse(oval_rect)
+
+    def _draw_mark(self, painter: QPainter, frame: QRectF) -> None:
+        painter.setClipRect(frame)
+        if self._mark_img is not None and self.has_mark():
+            eff, ox, oy = self._photo_geom()
+            r = self._mark_img.normalized()
+            wr = QRectF(
+                ox + r.x() * eff, oy + r.y() * eff,
+                r.width() * eff, r.height() * eff,
+            )
+            painter.setBrush(QBrush(QColor(255, 40, 40, 55)))
+            painter.setPen(QPen(QColor(235, 20, 20), 2, Qt.PenStyle.DashLine))
+            painter.drawRect(wr)
+            self._draw_label(painter, QPointF(wr.left() + 3, wr.top() - 4),
+                             "浮水印", QColor(200, 0, 0))
+        else:
+            self._draw_label(painter, QPointF(frame.x() + 6, frame.y() + 18),
+                             "拖曳框選浮水印範圍", QColor(200, 0, 0))
+        painter.setClipping(False)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

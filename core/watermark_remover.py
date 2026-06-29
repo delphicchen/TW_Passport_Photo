@@ -66,6 +66,9 @@ class RemovalResult:
     message: str = ""
 
 
+_rng = np.random.default_rng()   # for subtle grain in the inpainted fill
+
+
 # ── gwt-mini binary helpers ───────────────────────────────────────────────────
 
 def _platform_key() -> str:
@@ -225,6 +228,120 @@ def _smooth_boundary(arr: np.ndarray, x0: int, y0: int, ms: int,
     blurred_arr = np.array(blurred, dtype=np.float32)
     orig_arr    = arr[by0:by1, bx0:bx1]
     arr[by0:by1, bx0:bx1] = orig_arr * (1 - blend) + blurred_arr * blend
+
+
+# ── manual region removal (user-marked box) ───────────────────────────────────
+
+def _resize_rgb(arr: np.ndarray, w: int, h: int) -> np.ndarray:
+    im = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+    im = im.resize((max(1, w), max(1, h)), Image.BILINEAR)
+    return np.asarray(im, dtype=np.float32)
+
+
+def _resize_mask(mask: np.ndarray, w: int, h: int) -> np.ndarray:
+    im = Image.fromarray((mask * 255).astype(np.uint8))
+    im = im.resize((max(1, w), max(1, h)), Image.NEAREST)
+    return np.asarray(im) > 127
+
+
+def _dilate_mask(mask: np.ndarray, r: int) -> np.ndarray:
+    """Grow the mask by r pixels so a slightly-too-small box still covers the mark."""
+    if r <= 0:
+        return mask
+    from PIL import ImageFilter
+    im = Image.fromarray((mask * 255).astype(np.uint8))
+    im = im.filter(ImageFilter.MaxFilter(2 * r + 1))
+    return np.asarray(im) > 127
+
+
+def _inpaint_diffuse(sub: np.ndarray, mask: np.ndarray,
+                     iterations: int = 64) -> np.ndarray:
+    """Fill masked pixels by solving Laplace's equation (diffusion inpaint).
+
+    Coarse-to-fine (multiscale) so large regions converge in a fixed number of
+    iterations.  Known surrounding pixels act as the boundary condition, so the
+    filled patch is seamless at its edge.  Pure numpy/PIL — no external deps.
+    """
+    h, w = mask.shape
+    out = sub.copy()
+    if not mask.any():
+        return out
+
+    known = ~mask
+    # Coarse solve gives the low-frequency fill as an initial guess.
+    if max(h, w) > 24 and known.any():
+        ch, cw = max(1, h // 2), max(1, w // 2)
+        coarse = _inpaint_diffuse(
+            _resize_rgb(sub, cw, ch), _resize_mask(mask, cw, ch), iterations
+        )
+        out[mask] = _resize_rgb(coarse, w, h)[mask]
+    elif known.any():
+        out[mask] = sub[known].mean(axis=0)
+    else:
+        out[mask] = 255.0
+
+    # Jacobi relaxation toward the Laplace solution (edge-replicated borders).
+    for _ in range(iterations):
+        p = np.pad(out, ((1, 1), (1, 1), (0, 0)), mode="edge")
+        avg = (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]) * 0.25
+        out[mask] = avg[mask]
+    return out
+
+
+def remove_watermark_region(input_path: str,
+                            rect: tuple[int, int, int, int]) -> RemovalResult:
+    """Remove a watermark from a user-marked rectangle (image-pixel coords).
+
+    Unlike :func:`remove_watermark`, this does not assume a fixed corner or a
+    known logo mask — it inpaints whatever the user boxed.  Works best when the
+    box sits on a fairly uniform background (typical passport photos).
+
+    ``rect`` is ``(x, y, w, h)`` in original-image pixels.
+    """
+    try:
+        x, y, w, h = (int(round(v)) for v in rect)
+        img = Image.open(input_path).convert("RGB")
+        arr = np.array(img, dtype=np.float32)
+        ih, iw = arr.shape[:2]
+
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(iw, x + w), min(ih, y + h)
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            return RemovalResult(success=False, message="標記區域無效")
+
+        # Work on a padded sub-image so diffusion has a ring of known pixels.
+        pad = 12
+        bx0, by0 = max(0, x0 - pad), max(0, y0 - pad)
+        bx1, by1 = min(iw, x1 + pad), min(ih, y1 + pad)
+
+        sub = arr[by0:by1, bx0:bx1].copy()
+        mask = np.zeros(sub.shape[:2], dtype=bool)
+        mask[y0 - by0:y1 - by0, x0 - bx0:x1 - bx0] = True
+        mask = _dilate_mask(mask, 3)
+
+        solved = _inpaint_diffuse(sub, mask, iterations=64)
+
+        # Add subtle grain matched to the surrounding area so the fill doesn't
+        # read as an obviously smooth patch on a slightly noisy background.
+        ring = sub[~mask]
+        sigma = float(min(ring.std(), 6.0)) if ring.size else 0.0
+        if sigma > 0:
+            noise = _rng.standard_normal(solved.shape).astype(np.float32) * sigma
+            solved[mask] += noise[mask]
+
+        out = sub.copy()
+        out[mask] = solved[mask]
+        arr[by0:by1, bx0:bx1] = out
+
+        out_img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+        suffix = Path(input_path).suffix or ".jpg"
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp.close()
+        out_img.save(tmp.name)
+        return RemovalResult(success=True, output_path=tmp.name)
+
+    except Exception as exc:
+        return RemovalResult(success=False, message=str(exc))
 
 
 # ── unified entry point ───────────────────────────────────────────────────────

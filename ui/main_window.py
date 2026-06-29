@@ -34,6 +34,19 @@ class _RemoveWorker(QThread):
         self.finished.emit(result.success, result.output_path, result.message)
 
 
+class _RegionRemoveWorker(QThread):
+    finished = Signal(bool, str, str)   # ok, output_path, message
+
+    def __init__(self, input_path: str, rect: tuple[int, int, int, int]) -> None:
+        super().__init__()
+        self._input = input_path
+        self._rect = rect
+
+    def run(self) -> None:
+        result = watermark_remover.remove_watermark_region(self._input, self._rect)
+        self.finished.emit(result.success, result.output_path, result.message)
+
+
 # ── Main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -61,6 +74,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self.canvas.crop_changed.connect(self._refresh_preview)
+        self.canvas.mark_changed.connect(self._update_mark_buttons)
         root.addWidget(self.canvas, stretch=1)     # center (flexible)
 
         self.preview = PreviewPanel()
@@ -112,6 +126,20 @@ class MainWindow(QMainWindow):
         self.btn_remove_wm.setEnabled(False)
         self.btn_remove_wm.clicked.connect(self._remove_watermark)
         lay.addWidget(self.btn_remove_wm)
+
+        self.btn_mark_wm = QPushButton("🖍  手動標記浮水印")
+        self.btn_mark_wm.setMinimumHeight(32)
+        self.btn_mark_wm.setEnabled(False)
+        self.btn_mark_wm.setCheckable(True)
+        self.btn_mark_wm.toggled.connect(self._toggle_mark_mode)
+        lay.addWidget(self.btn_mark_wm)
+
+        self.btn_apply_mark = QPushButton("🧽  移除標記區域")
+        self.btn_apply_mark.setMinimumHeight(32)
+        self.btn_apply_mark.setVisible(False)
+        self.btn_apply_mark.setEnabled(False)
+        self.btn_apply_mark.clicked.connect(self._remove_marked_region)
+        lay.addWidget(self.btn_apply_mark)
 
         lay.addSpacing(6)
 
@@ -219,7 +247,11 @@ class MainWindow(QMainWindow):
     # ── watermark removal ─────────────────────────────────────────────────────
 
     def _update_wm_button(self) -> None:
-        self.btn_remove_wm.setEnabled(self._current_path is not None)
+        enabled = self._current_path is not None
+        self.btn_remove_wm.setEnabled(enabled)
+        self.btn_mark_wm.setEnabled(enabled)
+        if not enabled and self.btn_mark_wm.isChecked():
+            self.btn_mark_wm.setChecked(False)
 
     def _remove_watermark(self) -> None:
         if not self._current_path:
@@ -246,6 +278,53 @@ class MainWindow(QMainWindow):
         px = QPixmap(output_path)
         self.canvas.load_photo(px)
         self.info_label.setText(self.info_label.text() + "\n✓ 浮水印已移除")
+        self.ai_panel.show_result(ai_detector.detect(output_path))
+        self._refresh_preview()
+
+    # ── manual watermark marking ──────────────────────────────────────────────
+
+    def _toggle_mark_mode(self, on: bool) -> None:
+        self.canvas.set_mark_mode(on)
+        self.btn_mark_wm.setText("✖  取消標記" if on else "🖍  手動標記浮水印")
+        self.btn_apply_mark.setVisible(on)
+        self._update_mark_buttons()
+        if on:
+            self.info_label.setText("拖曳框選浮水印範圍，再按「移除標記區域」")
+
+    def _update_mark_buttons(self) -> None:
+        self.btn_apply_mark.setEnabled(
+            self.btn_mark_wm.isChecked() and self.canvas.has_mark()
+        )
+
+    def _remove_marked_region(self) -> None:
+        if not self._current_path:
+            return
+        rect = self.canvas.marked_image_rect()
+        if rect is None:
+            return
+        prog = QProgressDialog("正在移除標記區域 …", None, 0, 0, self)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+        prog.show()
+
+        self._mark_worker = _RegionRemoveWorker(self._current_path, rect)
+        self._mark_worker.finished.connect(
+            lambda ok, out, msg: self._on_region_rm_done(ok, out, msg, prog)
+        )
+        self._mark_worker.start()
+
+    def _on_region_rm_done(
+        self, ok: bool, output_path: str, message: str,
+        prog: QProgressDialog,
+    ) -> None:
+        prog.close()
+        if not ok:
+            QMessageBox.critical(self, "移除失敗", message)
+            return
+        self._current_path = output_path
+        px = QPixmap(output_path)
+        self.btn_mark_wm.setChecked(False)   # exits mark mode + clears the box
+        self.canvas.load_photo(px)
+        self.info_label.setText(self.info_label.text() + "\n✓ 標記區域已移除")
         self.ai_panel.show_result(ai_detector.detect(output_path))
         self._refresh_preview()
 
