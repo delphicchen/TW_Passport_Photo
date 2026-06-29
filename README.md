@@ -24,7 +24,31 @@
 | 解析度 | 600 DPI |
 | 輸出像素 | 827 × 1063 px |
 
-## 安裝(也可以由下方release 直接下載打包好的執行檔)
+## 下載與安裝
+
+前往 [Releases](https://github.com/delphicchen/TW_Passport_Photo/releases/latest) 頁面下載對應平台的執行檔，**不需要安裝 Python**。
+
+| 平台 | 檔案 | 說明 |
+|------|------|------|
+| Windows | `TW_Passport_Photo.exe` | 直接雙擊執行 |
+| macOS | `TW_Passport_Photo-macOS.zip` | 解壓後**右鍵 → 打開**（見下方說明）|
+| Linux | `TW_Passport_Photo-linux` | `chmod +x TW_Passport_Photo-linux && ./TW_Passport_Photo-linux` |
+
+### macOS 首次執行說明
+
+本軟體未申請 Apple 數位簽名，macOS 預設會封鎖。請依以下步驟開啟：
+
+1. 解壓縮 `.zip`，將 `TW_Passport_Photo.app` 拖到任意位置
+2. **右鍵**點擊 app → 選「**打開**」（不是雙擊）
+3. 彈出警告視窗後，再按一次「**打開**」
+
+之後即可正常雙擊執行，不會再出現警告。
+
+> 若以上方法無效，請至「**系統設定 → 隱私權與安全性**」→ 滑到下方 → 點「**仍要打開**」
+
+---
+
+## 從原始碼執行（開發者）
 
 ```bash
 # 建議使用虛擬環境
@@ -32,11 +56,6 @@ python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
-```
-
-## 執行
-
-```bash
 python main.py
 ```
 
